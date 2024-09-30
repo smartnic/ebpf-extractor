@@ -2,8 +2,6 @@
 #include <stdbool.h>
 #include <dlfcn.h>
 
-#include <libbpf.h>
-
 #include "ebpf_extractor.h"
 
 static int (*bpf_object__relocate_data_wrapper)(struct bpf_object *, struct bpf_program *) = NULL;
@@ -74,30 +72,75 @@ int ebpf_extractor__extract(const char *path)
     return EXIT_SUCCESS;
 }
 
-int ebpf_extractor__extract_maps(struct bpf_object *obj) {
+// TODO: remove carriage return
+int ebpf_extractor__extract_maps(struct bpf_object *obj)
+{
     if (!obj || !init)
         return EXIT_FAILURE;
+
+    size_t total_map_string_len = 0;
 
     struct bpf_map *map;
     int vfd = 0;
 
     bpf_object__for_each_map(map, obj) {
-        // TODO: add fix_progname() and write to file.
-        bpf_map__set_fd(map, vfd);
-        char map_string[128];
-        snprintf(map_string, 128,
-            "%s { %s = %d, %s = %u, %s = %u, %s = %u, %s = %d }\n", 
+        size_t current_map_string_len = snprintf(NULL, 0,
+            "%s { type = %d, key_size = %u, value_size = %u, max_entries = %u, fd = %d }\n",
             bpf_map__name(map),
-            "type", bpf_map__type(map),
-            "key_size", bpf_map__key_size(map),
-            "value_size", bpf_map__value_size(map),
-            "max_entries", bpf_map__max_entries(map),
-            "fd", vfd
+            bpf_map__type(map),
+            bpf_map__key_size(map),
+            bpf_map__value_size(map),
+            bpf_map__max_entries(map),
+            vfd  
         );
-        vfd++;
-        printf("%s\n", map_string);
+        total_map_string_len += current_map_string_len;
+        ++vfd;
     }
 
-    // Furthermore, we need to write this for *each* program, cannot forget that. So build up the whole thing above and then write for each prog.
+    ++total_map_string_len; // Account for the null terminator
+
+    char map_string[total_map_string_len];
+    size_t offset = 0;
+    vfd = 0;
+
+    bpf_object__for_each_map(map, obj) {
+        bpf_map__set_fd(map, vfd);
+        size_t next_offset = sprintf(map_string + offset,
+            "%s { type = %d, key_size = %u, value_size = %u, max_entries = %u, fd = %d }\n",
+            bpf_map__name(map),
+            bpf_map__type(map),
+            bpf_map__key_size(map),
+            bpf_map__value_size(map),
+            bpf_map__max_entries(map),
+            vfd
+        );
+        offset += next_offset;
+        ++vfd;
+    }
+
+    struct bpf_program *prog;
+
+    bpf_object__for_each_program(prog, obj) {
+        const char *prog_name = bpf_program__name(prog);
+        size_t prog_len = strlen(prog_name);
+        char fixed_progname[prog_len + strlen(MAP_FILETYPE) + 1];
+        ebpf_extractor__fix_progname(prog_name, prog_len, fixed_progname);
+        strcat(fixed_progname, MAP_FILETYPE);
+        FILE *output = fopen(fixed_progname , "w");
+        fprintf(output, "%s", map_string);
+    }
+
     return EXIT_SUCCESS;
+}
+
+void ebpf_extractor__fix_progname(const char *prog_name, const size_t prog_len, char *fixed_progname)
+{
+    for (size_t i = 0; i < prog_len; ++i) {
+        if (prog_name[i] == '/')
+            fixed_progname[i] = '-';
+        else
+            fixed_progname[i] = prog_name[i];
+    }
+
+    fixed_progname[prog_len] = '\0';
 }
