@@ -249,7 +249,7 @@ int ebpf_extractor__extract_insns(struct bpf_program *prog)
 
     for (size_t i = 0; i < insn_cnt; ++i) {
         struct bpf_insn insn = insns[i];
-        fprintf(readable_file, "{%d %d %d %d %d}",
+        fprintf(readable_file, "{%hhu %hhu %hhu %hd %d}",
             insn.code,
             insn.src_reg,
             insn.dst_reg,
